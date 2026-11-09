@@ -35,6 +35,13 @@ jobs:
             -d build/stubs \
             stubs/javax/microedition/media/control/RecordControl.java
 
+      - name: Package stub into JAR
+        run: |
+          cd build/stubs
+          jar cf ../../libs/stubs.jar .
+          cd ../..
+          ls -lh libs/stubs.jar
+
       - name: Compile MIDlet
         run: |
           mkdir -p build/classes
@@ -53,7 +60,7 @@ jobs:
             -outjars build/preverified.jar \
             -libraryjars libs/cldcapi11.jar \
             -libraryjars libs/midpapi20.jar \
-            -libraryjars build/stubs \
+            -libraryjars libs/stubs.jar \
             -keep public class * extends javax.microedition.midlet.MIDlet
           echo "OK: preverificado"
           ls -lh build/preverified.jar
