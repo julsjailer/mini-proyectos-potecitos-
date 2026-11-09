@@ -1,4 +1,3 @@
-
 name: Build J2ME MIDlet
 
 on:
@@ -21,7 +20,8 @@ jobs:
           distribution: temurin
           java-version: '8'
 
-      - name: Download CLDC/MIDP stubs + ProGuard
+      # Descargar bibliotecas necesarias
+      - name: Download libraries
         run: |
           set -e
           mkdir -p libs
@@ -45,7 +45,6 @@ jobs:
           test -s libs/midpapi20.jar
           test -s proguard.zip
 
-          echo "Verificando ProGuard..."
           unzip -t proguard.zip
           unzip -q proguard.zip -d proguard
 
@@ -54,30 +53,135 @@ jobs:
           echo "Bibliotecas descargadas:"
           ls -lh libs/
 
-      - name: Compile MMAPI control stubs
+      # Generar automáticamente las clases MMAPI necesarias
+      - name: Generate MMAPI stubs
         run: |
           set -e
+
+          mkdir -p build/stubsrc/javax/microedition/media/control
           mkdir -p build/stubs
+
+          cat > build/stubsrc/javax/microedition/media/Control.java <<'EOF'
+          package javax.microedition.media;
+
+          public interface Control {
+          }
+          EOF
+
+          cat > build/stubsrc/javax/microedition/media/MediaException.java <<'EOF'
+          package javax.microedition.media;
+
+          public class MediaException extends Exception {
+              public MediaException() {
+                  super();
+              }
+
+              public MediaException(String message) {
+                  super(message);
+              }
+          }
+          EOF
+
+          cat > build/stubsrc/javax/microedition/media/Player.java <<'EOF'
+          package javax.microedition.media;
+
+          public interface Player {
+              int STARTED = 400;
+
+              void realize() throws MediaException;
+              void start() throws MediaException;
+              void stop() throws MediaException;
+              void close();
+              int getState();
+              Control getControl(String controlType);
+          }
+          EOF
+
+          cat > build/stubsrc/javax/microedition/media/Manager.java <<'EOF'
+          package javax.microedition.media;
+
+          import java.io.InputStream;
+          import java.io.IOException;
+
+          public class Manager {
+              public static Player createPlayer(String locator)
+                      throws IOException, MediaException {
+                  return null;
+              }
+
+              public static Player createPlayer(
+                      InputStream stream, String type)
+                      throws IOException, MediaException {
+                  return null;
+              }
+          }
+          EOF
+
+          cat > build/stubsrc/javax/microedition/media/control/RecordControl.java <<'EOF'
+          package javax.microedition.media.control;
+
+          import javax.microedition.media.Control;
+          import javax.microedition.media.MediaException;
+          import java.io.IOException;
+          import java.io.OutputStream;
+
+          public interface RecordControl extends Control {
+              void setRecordStream(OutputStream stream);
+              void setRecordLocation(String locator)
+                      throws IOException, MediaException;
+              void startRecord();
+              void stopRecord();
+              void commit() throws IOException;
+              void reset() throws IOException;
+              void setRecordSizeLimit(int size)
+                      throws MediaException;
+              int getRecordSizeLimit();
+          }
+          EOF
+
+          cat > build/stubsrc/javax/microedition/media/control/VolumeControl.java <<'EOF'
+          package javax.microedition.media.control;
+
+          import javax.microedition.media.Control;
+
+          public interface VolumeControl extends Control {
+              int setLevel(int level);
+              int getLevel();
+              boolean isMuted();
+              void setMute(boolean mute);
+          }
+          EOF
+
+          echo "Clases MMAPI generadas."
+
+      # Compilar las clases MMAPI
+      - name: Compile MMAPI stubs
+        run: |
+          set -e
 
           javac -source 1.3 -target 1.1 \
             -bootclasspath libs/cldcapi11.jar:libs/midpapi20.jar \
             -d build/stubs \
-            stubs/javax/microedition/media/control/RecordControl.java \
-            stubs/javax/microedition/media/control/VolumeControl.java
+            $(find build/stubsrc -name "*.java")
 
-          echo "Stubs compilados correctamente."
+          echo "Clases MMAPI compiladas."
 
-      - name: Package stubs
+      # Empaquetar las clases MMAPI
+      - name: Package MMAPI stubs
         run: |
           set -e
+
           cd build/stubs
           jar cf ../../libs/stubs.jar .
           cd ../..
+
           ls -lh libs/stubs.jar
 
+      # Compilar el MIDlet
       - name: Compile MIDlet
         run: |
           set -e
+
           mkdir -p build/classes
 
           javac -source 1.3 -target 1.1 \
@@ -87,30 +191,39 @@ jobs:
             src/PruebaAudioMIDlet.java
 
           echo "MIDlet compilado correctamente."
+          find build/classes -type f
 
+      # Configurar ProGuard
       - name: Create ProGuard config
         run: |
-          printf '%s\n' \
-            '-microedition' \
-            '-dontobfuscate' \
-            '-dontoptimize' \
-            '-dontwarn' \
-            '-injars build/classes' \
-            '-outjars build/preverified.jar' \
-            '-libraryjars libs/cldcapi11.jar' \
-            '-libraryjars libs/midpapi20.jar' \
-            '-libraryjars libs/stubs.jar' \
-            '-keep public class PruebaAudioMIDlet { public <init>(); }' \
-            > proguard.cfg
+          cat > proguard.cfg <<'EOF'
+          -microedition
+          -dontobfuscate
+          -dontoptimize
+          -dontwarn
+          -injars build/classes
+          -outjars build/preverified.jar
+          -libraryjars libs/cldcapi11.jar
+          -libraryjars libs/midpapi20.jar
+          -libraryjars libs/stubs.jar
+          -keep public class PruebaAudioMIDlet {
+              public <init>();
+          }
+          EOF
 
           cat proguard.cfg
 
+      # Preverificar
       - name: Preverify with ProGuard
         run: |
           set -e
+
           java -jar libs/proguard.jar @proguard.cfg
+
+          test -s build/preverified.jar
           ls -lh build/preverified.jar
 
+      # Crear JAR y JAD
       - name: Package JAR and JAD
         run: |
           set -e
@@ -126,20 +239,21 @@ jobs:
 
           JAR_SIZE=$(stat -c%s dist/PruebaAudioMIDlet.jar)
 
-          printf '%s\n' \
-            'MIDlet-1: PruebaAudioMIDlet, , PruebaAudioMIDlet' \
-            "MIDlet-Jar-Size: $JAR_SIZE" \
-            'MIDlet-Jar-URL: PruebaAudioMIDlet.jar' \
-            'MIDlet-Name: PruebaAudioMIDlet' \
-            'MIDlet-Vendor: Prueba' \
-            'MIDlet-Version: 1.0' \
-            'MicroEdition-Configuration: CLDC-1.1' \
-            'MicroEdition-Profile: MIDP-2.0' \
-            > dist/PruebaAudioMIDlet.jad
+          cat > dist/PruebaAudioMIDlet.jad <<EOF
+          MIDlet-1: PruebaAudioMIDlet, , PruebaAudioMIDlet
+          MIDlet-Jar-Size: $JAR_SIZE
+          MIDlet-Jar-URL: PruebaAudioMIDlet.jar
+          MIDlet-Name: PruebaAudioMIDlet
+          MIDlet-Vendor: Prueba
+          MIDlet-Version: 1.0
+          MicroEdition-Configuration: CLDC-1.1
+          MicroEdition-Profile: MIDP-2.0
+          EOF
 
           echo "Archivos generados:"
           ls -lh dist/
 
+      # Publicar los archivos
       - name: Upload JAR and JAD
         uses: actions/upload-artifact@v4
         with:
