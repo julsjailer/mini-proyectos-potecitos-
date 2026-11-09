@@ -65,19 +65,23 @@ jobs:
             '-libraryjars libs/stubs.jar' \
             '-keep public class PruebaAudioMIDlet { public <init>(); }' \
             > proguard.cfg
-          echo "=== proguard.cfg ==="
           cat proguard.cfg
 
       - name: Preverify with ProGuard
         run: |
           java -jar libs/proguard.jar @proguard.cfg
-          echo "OK: preverificado"
           ls -lh build/preverified.jar
 
       - name: Package JAR and JAD
         run: |
-          mkdir -p dist
-          jar cfm dist/PruebaAudioMIDlet.jar MANIFEST.MF -C build/preverified.jar .
+          mkdir -p dist build/preverified
+          # El paso anterior deja un JAR; hay que extraerlo a un directorio
+          cd build/preverified
+          jar xf ../preverified.jar
+          cd ../..
+          # Ahora sí, empaquetar con nuestro MANIFEST.MF
+          jar cfm dist/PruebaAudioMIDlet.jar MANIFEST.MF -C build/preverified .
+          # Generar el JAD con el tamaño real
           JAR_SIZE=$(stat -c%s dist/PruebaAudioMIDlet.jar)
           printf '%s\n' \
             'MIDlet-1: PruebaAudioMIDlet, , PruebaAudioMIDlet' \
