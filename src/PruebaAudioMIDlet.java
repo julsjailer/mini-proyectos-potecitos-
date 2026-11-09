@@ -3,8 +3,10 @@ import javax.microedition.lcdui.*;
 import javax.microedition.media.*;
 import javax.microedition.media.control.*;
 import java.io.*;
+import java.util.Vector;
 
-public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
+public class PruebaAudioMIDlet extends MIDlet
+        implements CommandListener {
 
     private Display display;
     private AudioCanvas canvas;
@@ -27,18 +29,32 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
 
     public void commandAction(Command c, Displayable d) {
         if (c == salirCmd) {
-            destroyApp(true);
+            if (canvas != null) {
+                canvas.detenerTodo();
+            }
             notifyDestroyed();
         }
     }
 
     class AudioCanvas extends Canvas {
 
-        private byte[] audioData;
-        private String mimeCapturado;
+        private Vector segmentos = new Vector();
+        private Vector formatos = new Vector();
+
         private String estado = "Listo para grabar";
+        private String diagnostico = "";
+        private int[] duraciones = {5, 10, 15, 30, 60};
+        private int indiceDuracion = 0;
         private int segundosRestantes = 0;
+        private int volumen = 70;
+
         private boolean ocupado = false;
+        private boolean grabando = false;
+        private boolean pausada = false;
+        private boolean finalizar = false;
+
+        private Player reproductor;
+        private VolumeControl controlVolumen;
 
         private Font titulo;
         private Font normal;
@@ -69,83 +85,103 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
                     Graphics.TOP | Graphics.LEFT);
 
             int margen = 7;
-            int ancho = w - (margen * 2);
-            int tarjetaY = 39;
-            int tarjetaH = 42;
+            int ancho = w - margen * 2;
+            int y = 38;
+            int tarjetaH = 37;
 
-            dibujarTarjeta(g, margen, tarjetaY,
-                    ancho, tarjetaH, 0x145078);
-
+            dibujarTarjeta(g, margen, y, ancho, tarjetaH,
+                    0x145078);
             g.setColor(0xFFFFFF);
             g.setFont(titulo);
-            g.drawString("1  GRABAR", margen + 10,
-                    tarjetaY + 5, Graphics.TOP | Graphics.LEFT);
-
+            g.drawString("1  GRABAR", margen + 9, y + 3,
+                    Graphics.TOP | Graphics.LEFT);
             g.setFont(pequeno);
             g.setColor(0xD5E8F5);
-            g.drawString("Captura de audio durante 5 segundos",
-                    margen + 10, tarjetaY + 25,
+            g.drawString("Duracion: " + duraciones[indiceDuracion]
+                    + " segundos", margen + 9, y + 21,
                     Graphics.TOP | Graphics.LEFT);
 
-            tarjetaY += tarjetaH + 7;
+            y += tarjetaH + 5;
 
-            dibujarTarjeta(g, margen, tarjetaY,
-                    ancho, tarjetaH, 0x245B49);
-
+            dibujarTarjeta(g, margen, y, ancho, tarjetaH,
+                    0x245B49);
             g.setColor(0xFFFFFF);
             g.setFont(titulo);
-            g.drawString("2  REPRODUCIR", margen + 10,
-                    tarjetaY + 5, Graphics.TOP | Graphics.LEFT);
-
-            g.setFont(pequeno);
-            g.setColor(0xD8F1E5);
-            g.drawString("Escucha la ultima grabacion",
-                    margen + 10, tarjetaY + 25,
+            g.drawString("2  REPRODUCIR", margen + 9, y + 8,
                     Graphics.TOP | Graphics.LEFT);
 
-            tarjetaY += tarjetaH + 10;
+            y += tarjetaH + 5;
+
+            dibujarTarjeta(g, margen, y, ancho, tarjetaH,
+                    0x594A25);
+            g.setColor(0xFFFFFF);
+            g.setFont(titulo);
+            g.drawString("3  PAUSAR / CONTINUAR", margen + 9,
+                    y + 8, Graphics.TOP | Graphics.LEFT);
+
+            y += tarjetaH + 5;
+
+            dibujarTarjeta(g, margen, y, ancho, tarjetaH,
+                    0x633D42);
+            g.setColor(0xFFFFFF);
+            g.setFont(titulo);
+            g.drawString("4  FINALIZAR", margen + 9, y + 8,
+                    Graphics.TOP | Graphics.LEFT);
+
+            y += tarjetaH + 5;
+
+            dibujarTarjeta(g, margen, y, ancho, tarjetaH,
+                    0x344B68);
+            g.setColor(0xFFFFFF);
+            g.setFont(titulo);
+            g.drawString("5  CAMBIAR DURACION", margen + 9,
+                    y + 8, Graphics.TOP | Graphics.LEFT);
+
+            y += tarjetaH + 7;
 
             g.setColor(0x9BC7E5);
             g.setFont(normal);
-            g.drawString("ESTADO", margen + 2, tarjetaY,
+            g.drawString("ESTADO", margen + 2, y,
                     Graphics.TOP | Graphics.LEFT);
 
-            tarjetaY += normal.getHeight() + 3;
+            y += normal.getHeight() + 3;
 
-            int panelH = h - tarjetaY - 18;
-            if (panelH < 38) {
-                panelH = 38;
+            int panelH = h - y - 22;
+            if (panelH < 35) {
+                panelH = 35;
             }
 
-            dibujarTarjeta(g, margen, tarjetaY,
-                    ancho, panelH, 0x102A43);
+            dibujarTarjeta(g, margen, y, ancho, panelH,
+                    0x102A43);
 
             g.setColor(0xFFFFFF);
             g.setFont(normal);
 
-            if (segundosRestantes > 0) {
-                g.drawString("Grabando: " + segundosRestantes + " s",
-                        margen + 9, tarjetaY + 7,
+            if (segundosRestantes > 0 && grabando
+                    && !pausada) {
+                g.drawString("Restante: " + segundosRestantes
+                        + " s", margen + 8, y + 5,
                         Graphics.TOP | Graphics.LEFT);
+                dibujarTextoEnvuelto(g, estado,
+                        margen + 8, y + 22,
+                        ancho - 16, panelH - 25);
             } else {
                 dibujarTextoEnvuelto(g, estado,
-                        margen + 9, tarjetaY + 7,
-                        ancho - 18, panelH - 14);
+                        margen + 8, y + 5,
+                        ancho - 16, panelH - 10);
             }
 
             g.setColor(0x9AB4C9);
             g.setFont(pequeno);
-            g.drawString("Teclas 1 y 2  |  Opcion Salir",
+            g.drawString("7 - Volumen | 9 + Volumen",
                     margen, h - pequeno.getHeight() - 3,
                     Graphics.BOTTOM | Graphics.LEFT);
         }
 
-        private void dibujarTarjeta(Graphics g,
-                int x, int y, int w, int h, int color) {
-
+        private void dibujarTarjeta(Graphics g, int x, int y,
+                int w, int h, int color) {
             g.setColor(color);
             g.fillRoundRect(x, y, w, h, 8, 8);
-
             g.setColor(0x47718F);
             g.drawRoundRect(x, y, w, h, 8, 8);
         }
@@ -162,13 +198,13 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
             int altoLinea = normal.getHeight() + 2;
             String resto = texto;
 
-            while (resto.length() > 0 &&
-                    y < inicioY + maxAlto) {
+            while (resto.length() > 0
+                    && y < inicioY + maxAlto) {
 
                 int corte = resto.length();
 
-                while (corte > 1 &&
-                        normal.stringWidth(
+                while (corte > 1
+                        && normal.stringWidth(
                         resto.substring(0, corte)) > maxAncho) {
                     corte--;
                 }
@@ -189,8 +225,8 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
 
                 resto = resto.substring(corte);
 
-                while (resto.length() > 0 &&
-                        resto.charAt(0) == ' ') {
+                while (resto.length() > 0
+                        && resto.charAt(0) == ' ') {
                     resto = resto.substring(1);
                 }
 
@@ -199,27 +235,54 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
         }
 
         protected void keyPressed(int keyCode) {
-            if (ocupado) {
-                return;
-            }
-
             if (keyCode == Canvas.KEY_NUM1) {
-                grabar();
+                iniciarGrabacion();
             } else if (keyCode == Canvas.KEY_NUM2) {
                 reproducir();
+            } else if (keyCode == Canvas.KEY_NUM3) {
+                cambiarPausa();
+            } else if (keyCode == Canvas.KEY_NUM4) {
+                finalizarGrabacion();
+            } else if (keyCode == Canvas.KEY_NUM5) {
+                cambiarDuracion();
+            } else if (keyCode == Canvas.KEY_NUM7) {
+                cambiarVolumen(-10);
+            } else if (keyCode == Canvas.KEY_NUM9) {
+                cambiarVolumen(10);
             }
         }
 
-        private void grabar() {
+        private void cambiarDuracion() {
             if (ocupado) {
+                estado = "No se puede cambiar ahora.";
+            } else {
+                indiceDuracion++;
+                if (indiceDuracion >= duraciones.length) {
+                    indiceDuracion = 0;
+                }
+                estado = "Duracion seleccionada: "
+                        + duraciones[indiceDuracion] + " segundos.";
+            }
+            repaint();
+        }
+
+        private void iniciarGrabacion() {
+            if (ocupado) {
+                estado = "Hay una operacion en curso.";
+                repaint();
                 return;
             }
 
+            segmentos.removeAllElements();
+            formatos.removeAllElements();
+
+            finalizar = false;
+            pausada = false;
+            grabando = true;
             ocupado = true;
-            audioData = null;
-            mimeCapturado = null;
-            estado = "Preparando grabacion...";
-            segundosRestantes = 5;
+            segundosRestantes = duraciones[indiceDuracion];
+            estado = "Preparando microfono...";
+            diagnostico = "";
             repaint();
 
             Thread hilo = new Thread(new Runnable() {
@@ -227,91 +290,143 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
                     grabarHilo();
                 }
             });
-
             hilo.start();
         }
 
+        private void cambiarPausa() {
+            if (!grabando) {
+                estado = "No hay grabacion activa.";
+            } else {
+                pausada = !pausada;
+                if (pausada) {
+                    estado = "Pausando grabacion...";
+                } else {
+                    estado = "Continuando grabacion...";
+                }
+            }
+            repaint();
+        }
+
+        private void finalizarGrabacion() {
+            if (grabando) {
+                finalizar = true;
+                pausada = false;
+                estado = "Finalizando grabacion...";
+            } else {
+                estado = "No hay grabacion activa.";
+            }
+            repaint();
+        }
+
         private void grabarHilo() {
-            String error1 = null;
-            String error2 = null;
-            byte[] datos = null;
-            String mime = null;
+            int duracion = duraciones[indiceDuracion];
+            int tiempoActivo = 0;
+            String error = null;
 
-            String[] locators = new String[] {
-                "capture://audio",
-                "capture://audio?encoding=amr"
-            };
+            while (tiempoActivo < duracion && !finalizar) {
 
-            for (int intento = 0;
-                    intento < locators.length; intento++) {
-
-                try {
-                    estado = "Intento " + (intento + 1) + " de 2...";
-                    segundosRestantes = 5;
+                if (pausada) {
+                    estado = "Grabacion pausada. Pulsa 3 para seguir.";
+                    segundosRestantes = duracion - tiempoActivo;
                     repaint();
 
-                    datos = grabarConLocator(locators[intento]);
+                    try {
+                        Thread.sleep(150);
+                    } catch (InterruptedException e) {
+                    }
+                    continue;
+                }
+
+                try {
+                    estado = "Grabando segmento...";
+                    segundosRestantes = duracion - tiempoActivo;
+                    repaint();
+
+                    Object[] resultado =
+                            grabarSegmento(duracion - tiempoActivo);
+
+                    byte[] datos = (byte[]) resultado[0];
+                    String mime = (String) resultado[1];
+                    int segundos = ((Integer) resultado[2]).intValue();
 
                     if (datos != null && datos.length > 0) {
+                        segmentos.addElement(datos);
+                        formatos.addElement(mime);
+                    }
 
-                        if (datos.length >= 4 &&
-                                datos[0] == 'R' &&
-                                datos[1] == 'I' &&
-                                datos[2] == 'F' &&
-                                datos[3] == 'F') {
+                    tiempoActivo += segundos;
 
-                            mime = "audio/x-wav";
-
-                        } else {
-                            mime = "audio/amr";
-                        }
-
+                    if (segundos == 0 && !finalizar) {
+                        error = "No se pudo completar un segmento.";
                         break;
                     }
 
                 } catch (Exception e) {
-
-                    if (intento == 0) {
-                        error1 = e.getClass().getName()
-                                + ": " + e.getMessage();
-                    } else {
-                        error2 = e.getClass().getName()
-                                + ": " + e.getMessage();
-                    }
+                    error = e.getClass().getName()
+                            + ": " + e.getMessage();
+                    break;
                 }
             }
 
-            if (datos != null && datos.length > 0) {
-
-                audioData = datos;
-                mimeCapturado = mime;
-
-                estado = "Grabacion completada: "
-                        + datos.length + " bytes (" + mime + ")";
-
-            } else {
-
-                String detalle = "";
-
-                if (error1 != null) {
-                    detalle = " Intento 1: " + error1;
-                }
-
-                if (error2 != null) {
-                    detalle += " Intento 2: " + error2;
-                }
-
-                estado = "No se recibieron datos de audio."
-                        + detalle;
-            }
-
-            segundosRestantes = 0;
+            grabando = false;
+            pausada = false;
             ocupado = false;
+            segundosRestantes = 0;
+
+            if (segmentos.size() > 0) {
+                estado = "Grabacion lista. Segmentos: "
+                        + segmentos.size();
+                diagnostico = "Tiempo grabado: "
+                        + tiempoActivo + " s";
+            } else {
+                estado = "No se obtuvo audio.";
+                if (error != null) {
+                    diagnostico = error;
+                }
+            }
+
             repaint();
         }
 
-        private byte[] grabarConLocator(String locator)
+        private Object[] grabarSegmento(int maxSegundos)
                 throws Exception {
+
+            String[] locators = {
+                "capture://audio",
+                "capture://audio?encoding=amr"
+            };
+
+            Exception ultimoError = null;
+
+            for (int i = 0; i < locators.length; i++) {
+                try {
+                    Object[] r = grabarConLocator(
+                            locators[i], maxSegundos);
+                    byte[] datos = (byte[]) r[0];
+
+                    if (datos != null && datos.length > 0) {
+                        return r;
+                    }
+                } catch (Exception e) {
+                    ultimoError = e;
+                }
+
+                if (finalizar || pausada) {
+                    break;
+                }
+            }
+
+            if (ultimoError != null) {
+                throw ultimoError;
+            }
+
+            return new Object[] {
+                new byte[0], "unknown", new Integer(0)
+            };
+        }
+
+        private Object[] grabarConLocator(String locator,
+                int maxSegundos) throws Exception {
 
             Player p = null;
             RecordControl rc = null;
@@ -319,9 +434,9 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
                     new ByteArrayOutputStream();
 
             boolean iniciada = false;
+            long inicio = System.currentTimeMillis();
 
             try {
-
                 p = Manager.createPlayer(locator);
                 p.realize();
 
@@ -336,31 +451,51 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
                 rc.setRecordStream(salida);
                 rc.startRecord();
                 p.start();
-
                 iniciada = true;
 
-                for (int i = 5; i > 0; i--) {
+                while (!finalizar && !pausada) {
+                    long transcurrido =
+                            (System.currentTimeMillis() - inicio)
+                            / 1000;
 
-                    segundosRestantes = i;
+                    if (transcurrido >= maxSegundos) {
+                        break;
+                    }
+
+                    segundosRestantes =
+                            maxSegundos - (int) transcurrido;
                     repaint();
 
                     try {
-                        Thread.sleep(1000);
-                    } catch (InterruptedException ie) {
+                        Thread.sleep(150);
+                    } catch (InterruptedException e) {
                     }
                 }
 
                 rc.stopRecord();
                 rc.commit();
-
                 iniciada = false;
 
-                return salida.toByteArray();
+                byte[] datos = salida.toByteArray();
+                String mime = detectarFormato(datos);
+
+                int segundos = (int)
+                        ((System.currentTimeMillis() - inicio)
+                        / 1000);
+
+                if (segundos < 0) {
+                    segundos = 0;
+                }
+                if (segundos > maxSegundos) {
+                    segundos = maxSegundos;
+                }
+
+                return new Object[] {
+                    datos, mime, new Integer(segundos)
+                };
 
             } finally {
-
                 if (iniciada && rc != null) {
-
                     try {
                         rc.stopRecord();
                         rc.commit();
@@ -369,12 +504,10 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
                 }
 
                 if (p != null) {
-
                     try {
                         p.stop();
                     } catch (Exception e) {
                     }
-
                     try {
                         p.close();
                     } catch (Exception e) {
@@ -388,20 +521,50 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
             }
         }
 
-        private void reproducir() {
+        private String detectarFormato(byte[] d) {
+            if (d == null) {
+                return "unknown";
+            }
 
-            if (ocupado) {
+            if (d.length >= 12
+                    && d[0] == 'R' && d[1] == 'I'
+                    && d[2] == 'F' && d[3] == 'F') {
+                return "audio/x-wav";
+            }
+
+            if (d.length >= 6
+                    && d[0] == '#' && d[1] == '!'
+                    && d[2] == 'A' && d[3] == 'M'
+                    && d[4] == 'R') {
+                return "audio/amr";
+            }
+
+            if (d.length >= 9
+                    && d[0] == '#' && d[1] == '!'
+                    && d[2] == 'A' && d[3] == 'M'
+                    && d[4] == 'R' && d[5] == '-'
+                    && d[6] == 'W' && d[7] == 'B') {
+                return "audio/amr-wb";
+            }
+
+            return "unknown";
+        }
+
+        private void reproducir() {
+            if (ocupado || grabando) {
+                estado = "Espera a que termine la grabacion.";
+                repaint();
                 return;
             }
 
-            if (audioData == null || audioData.length == 0) {
+            if (segmentos.size() == 0) {
                 estado = "Todavia no hay audio grabado.";
                 repaint();
                 return;
             }
 
             ocupado = true;
-            estado = "Reproduciendo...";
+            estado = "Preparando reproduccion...";
             repaint();
 
             Thread hilo = new Thread(new Runnable() {
@@ -409,65 +572,168 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
                     reproducirHilo();
                 }
             });
-
             hilo.start();
         }
 
         private void reproducirHilo() {
+            int reproducidos = 0;
+            String errores = "";
 
-            Player p = null;
+            for (int i = 0; i < segmentos.size(); i++) {
+                byte[] datos = (byte[]) segmentos.elementAt(i);
+                String mime = (String) formatos.elementAt(i);
 
-            try {
+                try {
+                    estado = "Reproduciendo parte "
+                            + (i + 1) + " de " + segmentos.size();
+                    repaint();
 
-                ByteArrayInputStream entrada =
-                        new ByteArrayInputStream(audioData);
+                    reproducirSegmento(datos, mime);
+                    reproducidos++;
 
-                String mime = mimeCapturado;
-
-                if (mime == null) {
-                    mime = "audio/amr";
+                } catch (Exception e) {
+                    errores = e.getClass().getName()
+                            + ": " + e.getMessage();
+                    break;
                 }
+            }
 
-                p = Manager.createPlayer(entrada, mime);
-                p.realize();
-                p.start();
-
-                long inicio = System.currentTimeMillis();
-
-                while (p.getState() == Player.STARTED &&
-                        (System.currentTimeMillis() - inicio)
-                        < 10000) {
-
-                    try {
-                        Thread.sleep(100);
-                    } catch (InterruptedException ie) {
-                    }
-                }
-
+            if (reproducidos == segmentos.size()) {
                 estado = "Reproduccion finalizada.";
+                diagnostico = "Partes reproducidas: "
+                        + reproducidos;
+            } else {
+                estado = "No se pudo reproducir todo el audio.";
+                diagnostico = errores;
+            }
 
-            } catch (Exception e) {
+            ocupado = false;
+            repaint();
+        }
 
-                estado = "Error al reproducir: "
-                        + e.getClass().getName();
+        private void reproducirSegmento(byte[] datos,
+                String mime) throws Exception {
 
-            } finally {
+            String[] tipos;
 
-                if (p != null) {
+            if ("audio/x-wav".equals(mime)) {
+                tipos = new String[] {
+                    "audio/x-wav", "audio/wav"
+                };
+            } else if ("audio/amr".equals(mime)) {
+                tipos = new String[] {
+                    "audio/amr"
+                };
+            } else if ("audio/amr-wb".equals(mime)) {
+                tipos = new String[] {
+                    "audio/amr-wb", "audio/amr"
+                };
+            } else {
+                tipos = new String[] {
+                    "audio/amr", "audio/x-wav",
+                    "audio/wav", "audio/amr-wb"
+                };
+            }
 
-                    try {
-                        p.stop();
-                    } catch (Exception e) {
+            Exception ultimoError = null;
+
+            for (int i = 0; i < tipos.length; i++) {
+                Player p = null;
+
+                try {
+                    ByteArrayInputStream entrada =
+                            new ByteArrayInputStream(datos);
+
+                    p = Manager.createPlayer(entrada, tipos[i]);
+                    p.realize();
+
+                    Control c = p.getControl("VolumeControl");
+                    if (c != null) {
+                        controlVolumen = (VolumeControl) c;
+                        controlVolumen.setLevel(volumen);
+                    } else {
+                        controlVolumen = null;
                     }
 
-                    try {
-                        p.close();
-                    } catch (Exception e) {
+                    reproductor = p;
+                    p.start();
+
+                    long inicio = System.currentTimeMillis();
+                    long limite = inicio + 70000;
+
+                    while (p.getState() == Player.STARTED
+                            && System.currentTimeMillis() < limite) {
+                        try {
+                            Thread.sleep(150);
+                        } catch (InterruptedException e) {
+                        }
+                    }
+
+                    reproductor = null;
+                    controlVolumen = null;
+                    p.close();
+                    return;
+
+                } catch (Exception e) {
+                    ultimoError = e;
+                    reproductor = null;
+                    controlVolumen = null;
+
+                    if (p != null) {
+                        try {
+                            p.close();
+                        } catch (Exception ex) {
+                        }
                     }
                 }
+            }
 
-                ocupado = false;
-                repaint();
+            if (ultimoError != null) {
+                throw ultimoError;
+            }
+
+            throw new MediaException(
+                    "Formato de audio no compatible");
+        }
+
+        private void cambiarVolumen(int cambio) {
+            volumen += cambio;
+
+            if (volumen > 100) {
+                volumen = 100;
+            }
+            if (volumen < 0) {
+                volumen = 0;
+            }
+
+            if (controlVolumen != null) {
+                try {
+                    controlVolumen.setLevel(volumen);
+                    estado = "Volumen: " + volumen + "%";
+                } catch (Exception e) {
+                    estado = "El telefono no permite cambiar volumen.";
+                }
+            } else {
+                estado = "Volumen solicitado: " + volumen
+                        + "%. Control no disponible.";
+            }
+
+            repaint();
+        }
+
+        void detenerTodo() {
+            finalizar = true;
+            pausada = false;
+
+            if (reproductor != null) {
+                try {
+                    reproductor.stop();
+                } catch (Exception e) {
+                }
+                try {
+                    reproductor.close();
+                } catch (Exception e) {
+                }
             }
         }
     }
