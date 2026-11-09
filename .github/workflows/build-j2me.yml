@@ -17,14 +17,15 @@ jobs:
           distribution: 'temurin'
           java-version: '8'
 
-      - name: Verify javac
-        run: javac -version
-
       - name: Download CLDC/MIDP stubs
         run: |
           mkdir -p libs
           wget -q https://repo1.maven.org/maven2/org/microemu/cldcapi11/2.0.4/cldcapi11-2.0.4.jar -O libs/cldcapi11.jar
           wget -q https://repo1.maven.org/maven2/org/microemu/midpapi20/2.0.4/midpapi20-2.0.4.jar -O libs/midpapi20.jar
+          # Descargar ProGuard para preverificar
+          wget -q https://github.com/Guardsquare/proguard/releases/download/v7.1.1/proguard-7.1.1.zip -O proguard.zip
+          unzip -q proguard.zip -d proguard
+          mv proguard/proguard-7.1.1/lib/proguard.jar libs/proguard.jar
           ls -lh libs/
 
       - name: Compile RecordControl stub
@@ -34,8 +35,6 @@ jobs:
             -bootclasspath libs/cldcapi11.jar:libs/midpapi20.jar \
             -d build/stubs \
             stubs/javax/microedition/media/control/RecordControl.java
-          echo "OK stub"
-          find build/stubs -name "*.class"
 
       - name: Compile MIDlet
         run: |
@@ -45,13 +44,23 @@ jobs:
             -classpath libs/cldcapi11.jar:libs/midpapi20.jar:build/stubs \
             -d build/classes \
             src/PruebaAudioMIDlet.java
-          echo "OK MIDlet"
-          ls -lh build/classes
+
+      - name: Preverify with ProGuard (-microedition)
+        run: |
+          java -jar libs/proguard.jar \
+            -microedition \
+            -dontobfuscate -dontoptimize \
+            -injars build/classes \
+            -outjars build/preverified.jar \
+            -libraryjars libs/cldcapi11.jar \
+            -libraryjars libs/midpapi20.jar:build/stubs \
+            -keep public class * extends javax.microedition.midlet.MIDlet
+          echo "OK: preverificado"
 
       - name: Package JAR
         run: |
           mkdir -p dist
-          jar cfm dist/PruebaAudioMIDlet.jar MANIFEST.MF -C build/classes .
+          jar cfm dist/PruebaAudioMIDlet.jar MANIFEST.MF -C build/preverified.jar .
           ls -lh dist/
 
       - name: Upload JAR
