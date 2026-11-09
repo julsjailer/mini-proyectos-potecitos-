@@ -17,67 +17,79 @@ jobs:
           distribution: 'temurin'
           java-version: '8'
 
-      - name: Download WTK 2.5.2
-        run: |
-          wget -q --no-cookies --no-check-certificate \
-            --header "Cookie: oraclelicense=accept-securebackup-cookie" \
-            "https://download.oracle.com/otn-pub/java/sun_java_wireless_toolkit/2.5.2_01/sun_java_wireless_toolkit-2.5.2_01-linuxi486.bin.sh" \
-            -O wtk.bin.sh
-          chmod +x wtk.bin.sh
-
-      - name: Install WTK (silent)
-        run: |
-          # Instalación desatendida; si falla, se muestra el log
-          yes | ./wtk.bin.sh -console > /tmp/wtk_install.log 2>&1 || true
-          WTK_DIR=$(find . -maxdepth 2 -type d -name "WTK*" | head -n 1)
-          if [ -z "$WTK_DIR" ]; then
-            echo "ERROR: WTK no se instaló correctamente"
-            cat /tmp/wtk_install.log
-            exit 1
-          fi
-          echo "WTK instalado en: $WTK_DIR"
-          ls "$WTK_DIR/bin/preverify"
-
-      - name: Download CLDC/MIDP stubs
+      - name: Download CLDC/MIDP stubs + ProGuard
         run: |
           mkdir -p libs
           wget -q https://repo1.maven.org/maven2/org/microemu/cldcapi11/2.0.4/cldcapi11-2.0.4.jar -O libs/cldcapi11.jar
           wget -q https://repo1.maven.org/maven2/org/microemu/midpapi20/2.0.4/midpapi20-2.0.4.jar -O libs/midpapi20.jar
+          wget -q https://github.com/Guardsquare/proguard/releases/download/v7.1.1/proguard-7.1.1.zip -O proguard.zip
+          unzip -q proguard.zip -d proguard
+          mv proguard/proguard-7.1.1/lib/proguard.jar libs/proguard.jar
+          ls -lh libs/
+
+      - name: Compile RecordControl stub
+        run: |
+          mkdir -p build/stubs
+          javac -source 1.3 -target 1.1 \
+            -bootclasspath libs/cldcapi11.jar:libs/midpapi20.jar \
+            -d build/stubs \
+            stubs/javax/microedition/media/control/RecordControl.java
+
+      - name: Package stub into JAR
+        run: |
+          cd build/stubs
+          jar cf ../../libs/stubs.jar .
+          cd ../..
+          ls -lh libs/stubs.jar
 
       - name: Compile MIDlet
         run: |
           mkdir -p build/classes
           javac -source 1.3 -target 1.1 \
-            -bootclasspath libs/cldcapi11.jar:libs/midpapi20.jar \
-            -classpath libs/cldcapi11.jar:libs/midpapi20.jar \
+            -bootclasspath libs/cldcapi11.jar:libs/midpapi20.jar:build/stubs \
+            -classpath libs/cldcapi11.jar:libs/midpapi20.jar:build/stubs \
             -d build/classes \
             src/PruebaAudioMIDlet.java
 
-      - name: Preverify with WTK
+      - name: Create ProGuard config file
         run: |
-          WTK_DIR=$(find . -maxdepth 2 -type d -name "WTK*" | head -n 1)
-          PREVERIFY="$WTK_DIR/bin/preverify"
-          mkdir -p build/preverified
-          "$PREVERIFY" -classpath libs/cldcapi11.jar:libs/midpapi20.jar \
-            -d build/preverified \
-            build/classes
+          printf '%s\n' \
+            '-microedition' \
+            '-dontobfuscate' \
+            '-dontoptimize' \
+            '-dontwarn' \
+            '-injars build/classes' \
+            '-outjars build/preverified.jar' \
+            '-libraryjars libs/cldcapi11.jar' \
+            '-libraryjars libs/midpapi20.jar' \
+            '-libraryjars libs/stubs.jar' \
+            '-keep public class PruebaAudioMIDlet { public <init>(); }' \
+            > proguard.cfg
+          echo "=== proguard.cfg ==="
+          cat proguard.cfg
+
+      - name: Preverify with ProGuard
+        run: |
+          java -jar libs/proguard.jar @proguard.cfg
+          echo "OK: preverificado"
+          ls -lh build/preverified.jar
 
       - name: Package JAR and JAD
         run: |
           mkdir -p dist
-          jar cfm dist/PruebaAudioMIDlet.jar MANIFEST.MF -C build/preverified .
-          # Generar JAD (necesario para muchos teléfonos MediaTek)
+          jar cfm dist/PruebaAudioMIDlet.jar MANIFEST.MF -C build/preverified.jar .
           JAR_SIZE=$(stat -c%s dist/PruebaAudioMIDlet.jar)
-          cat > dist/PruebaAudioMIDlet.jad <<EOF
-          MIDlet-1: PruebaAudioMIDlet, , PruebaAudioMIDlet
-          MIDlet-Jar-Size: $JAR_SIZE
-          MIDlet-Jar-URL: PruebaAudioMIDlet.jar
-          MIDlet-Name: PruebaAudioMIDlet
-          MIDlet-Vendor: Prueba
-          MIDlet-Version: 1.0
-          MicroEdition-Configuration: CLDC-1.1
-          MicroEdition-Profile: MIDP-2.0
-          EOF
+          printf '%s\n' \
+            'MIDlet-1: PruebaAudioMIDlet, , PruebaAudioMIDlet' \
+            "MIDlet-Jar-Size: $JAR_SIZE" \
+            'MIDlet-Jar-URL: PruebaAudioMIDlet.jar' \
+            'MIDlet-Name: PruebaAudioMIDlet' \
+            'MIDlet-Vendor: Prueba' \
+            'MIDlet-Version: 1.0' \
+            'MicroEdition-Configuration: CLDC-1.1' \
+            'MicroEdition-Profile: MIDP-2.0' \
+            > dist/PruebaAudioMIDlet.jad
+          ls -lh dist/
 
       - name: Upload JAR and JAD
         uses: actions/upload-artifact@v4
