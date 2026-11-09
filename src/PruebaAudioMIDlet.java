@@ -50,7 +50,7 @@ public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
             normal = Font.getFont(Font.FACE_SYSTEM,
                     Font.STYLE_PLAIN, Font.SIZE_SMALL);
             pequeno = Font.getFont(Font.FACE_SYSTEM,
-                    Font.STYLE_PLAIN, Font.SIZE_VERY_SMALL);
+                    Font.STYLE_PLAIN, Font.SIZE_SMALL);
         }
 
         protected void paint(Graphics g) {
