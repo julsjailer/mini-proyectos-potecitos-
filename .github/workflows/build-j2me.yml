@@ -46,16 +46,18 @@ jobs:
             src/PruebaAudioMIDlet.java
 
       - name: Preverify with ProGuard (-microedition)
-        run: |
-          java -jar libs/proguard.jar \
-            -microedition \
-            -dontobfuscate -dontoptimize \
-            -injars build/classes \
-            -outjars build/preverified.jar \
-            -libraryjars libs/cldcapi11.jar \
-            -libraryjars libs/midpapi20.jar:build/stubs \
-            -keep public class * extends javax.microedition.midlet.MIDlet
-          echo "OK: preverificado"
+  run: |
+    java -jar libs/proguard.jar \
+      -microedition \
+      -dontobfuscate -dontoptimize \
+      -dontwarn \
+      -injars build/classes \
+      -outjars build/preverified.jar \
+      -libraryjars libs/cldcapi11.jar \
+      -libraryjars libs/midpapi20.jar \
+      -libraryjars build/stubs \
+      -keep public class * extends javax.microedition.midlet.MIDlet
+    echo "OK: preverificado"
 
       - name: Package JAR
         run: |
