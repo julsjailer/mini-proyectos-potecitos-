@@ -1,0 +1,68 @@
+name: Publish J2ME release
+
+on:
+  workflow_run:
+    workflows: ["Build J2ME MIDlet"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download compiled application
+        uses: actions/download-artifact@v4
+        with:
+          name: PruebaAudioMIDlet
+          path: dist
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Validate files and create checksums
+        run: |
+          test -s dist/PruebaAudioMIDlet.jar
+          test -s dist/PruebaAudioMIDlet.jad
+          cd dist
+          sha256sum PruebaAudioMIDlet.jar PruebaAudioMIDlet.jad > SHA256SUMS.txt
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_ID: ${{ github.event.workflow_run.id }}
+          BUILD_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="build-${BUILD_ID}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release already exists: $TAG"
+            exit 0
+          fi
+          cat > notes.md <<'NOTES'
+          ## Potecitos Audio: compilacion experimental
+
+          Descarga PruebaAudioMIDlet.jar y, si tu dispositivo lo necesita, PruebaAudioMIDlet.jad en los archivos adjuntos de este lanzamiento.
+
+          Controles: 1 grabar, 2 escuchar, 3 detener y 4 cambiar entre 5, 10 y 30 segundos.
+
+          Aplicacion Java ME para dispositivos o emuladores compatibles. No es un APK de Android ni una vista previa ejecutable dentro de GitHub. Las grabaciones son temporales.
+
+          Compilacion automatizada exitosa no significa prueba funcional: el microfono, la reproduccion y la compatibilidad deben verificarse en dispositivo o emulador.
+          NOTES
+          printf '\nCommit: %s\n' "$BUILD_SHA" >> notes.md
+          gh release create "$TAG" \
+            dist/PruebaAudioMIDlet.jar dist/PruebaAudioMIDlet.jad dist/SHA256SUMS.txt \
+            --target "$BUILD_SHA" \
+            --title "Potecitos Audio - build ${BUILD_ID}" \
+            --notes-file notes.md \
+            --prerelease
