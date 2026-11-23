@@ -3,225 +3,193 @@ import javax.microedition.lcdui.*;
 import javax.microedition.media.*;
 import javax.microedition.media.control.*;
 import java.io.*;
-import java.util.*;
 
 public class PruebaAudioMIDlet extends MIDlet implements CommandListener {
-
-    private Display display;
     private AudioCanvas canvas;
-    private Command salirCmd;
+    private final Command salir = new Command("Salir", Command.EXIT, 1);
 
     public void startApp() {
-        display = Display.getDisplay(this);
-        canvas = new AudioCanvas();
-        salirCmd = new Command("Salir", Command.EXIT, 1);
-        canvas.addCommand(salirCmd);
-        canvas.setCommandListener(this);
-        display.setCurrent(canvas);
+        if (canvas == null) {
+            canvas = new AudioCanvas();
+            canvas.addCommand(salir);
+            canvas.setCommandListener(this);
+        }
+        Display.getDisplay(this).setCurrent(canvas);
     }
-
-    public void pauseApp() {}
-    public void destroyApp(boolean unconditional) {}
-
+    public void pauseApp() { if (canvas != null) canvas.detener(); }
+    public void destroyApp(boolean unconditional) {
+        if (canvas != null) canvas.detener();
+    }
     public void commandAction(Command c, Displayable d) {
-        if (c == salirCmd) {
-            destroyApp(true);
-            notifyDestroyed();
-        }
+        if (c == salir) { destroyApp(true); notifyDestroyed(); }
     }
 
-    // ---------------------------------------------------------------
-    // Canvas principal
-    // ---------------------------------------------------------------
-    class AudioCanvas extends Canvas {
-        private String linea1 = "1 Grabar";
-        private String linea2 = "2 Reproducir";
-        private String estado = "";
-        private byte[] audioData = null;
-        private String mimeCapturado = null; // "audio/x-wav" o "audio/amr"
-
-        private Font fuente;
-
-        AudioCanvas() {
-            fuente = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
-        }
+    class AudioCanvas extends Canvas implements Runnable {
+        private final Object lock = new Object();
+        private volatile boolean parar;
+        private boolean ocupado;
+        private boolean grabando;
+        private int segundos = 5;
+        private byte[] audio;
+        private String mime;
+        private String estado = "Listo";
+        private final Font fuente = Font.getFont(Font.FACE_PROPORTIONAL, Font.STYLE_PLAIN, Font.SIZE_SMALL);
 
         protected void paint(Graphics g) {
+            String texto;
+            int duracion;
+            synchronized (lock) { texto = estado; duracion = segundos; }
             int w = getWidth();
-            int h = getHeight();
-            g.setColor(0x000000);
-            g.fillRect(0, 0, w, h);
-            g.setColor(0xFFFFFF);
-
-            int y = 2;
-            int salto = fuente.getHeight() + 2;
-
+            int salto = fuente.getHeight() + 3;
+            g.setColor(0x101820);
+            g.fillRect(0, 0, w, getHeight());
             g.setFont(fuente);
-            g.drawString(linea1, 2, y, Graphics.TOP | Graphics.LEFT);
-            y += salto;
-            g.drawString(linea2, 2, y, Graphics.TOP | Graphics.LEFT);
-            y += salto * 2;
-
-            // Estado en varias líneas si es largo
-            if (estado != null && estado.length() > 0) {
-                int maxAncho = w - 4;
-                String resto = estado;
-                while (resto.length() > 0 && y < h - salto) {
-                    int corte = resto.length();
-                    while (corte > 0 && fuente.stringWidth(resto.substring(0, corte)) > maxAncho) {
-                        corte--;
-                    }
-                    if (corte == 0) corte = 1;
-                    g.drawString(resto.substring(0, corte), 2, y, Graphics.TOP | Graphics.LEFT);
-                    resto = resto.substring(corte);
-                    y += salto;
-                }
+            g.setColor(0x58D6C7);
+            g.drawString("POTECITOS AUDIO", 3, 3, Graphics.TOP | Graphics.LEFT);
+            g.setColor(0xFFFFFF);
+            String[] lineas = {"1 Grabar | 2 Escuchar", "3 Detener",
+                "4 Duracion: " + duracion + " s", "Solo memoria; no se guarda al salir"};
+            int y = salto + 3;
+            for (int i = 0; i < lineas.length; i++) {
+                y = dibujar(g, lineas[i], y, salto, w);
             }
+            dibujar(g, texto, y + salto, salto, w);
         }
-
-        protected void keyPressed(int keyCode) {
-            if (keyCode == Canvas.KEY_NUM1) {
-                grabar();
-            } else if (keyCode == Canvas.KEY_NUM2) {
-                reproducir();
+        private int dibujar(Graphics g, String texto, int y, int salto, int w) {
+            while (texto.length() > 0 && y < getHeight()) {
+                int n = texto.length();
+                while (n > 1 && fuente.stringWidth(texto.substring(0, n)) > w - 6) n--;
+                g.drawString(texto.substring(0, n), 3, y, Graphics.TOP | Graphics.LEFT);
+                texto = texto.substring(n);
+                y += salto;
             }
+            return y;
         }
-
-        // -----------------------------------------------------------
-        // GRABACIÓN (5 s con TimerTask de corte)
-        // -----------------------------------------------------------
-        private void grabar() {
-            estado = "Grabando...";
-            audioData = null;
-            mimeCapturado = null;
+        private void mensaje(String texto) {
+            synchronized (lock) { estado = texto; }
             repaint();
-
-            new Thread(new Runnable() {
-                public void run() {
-                    grabarHilo();
-                }
-            }).start();
         }
-
-        private void grabarHilo() {
+        void detener() { parar = true; }
+        protected void keyPressed(int key) {
+            if (key == KEY_NUM3) { detener(); return; }
+            synchronized (lock) {
+                if (ocupado) return;
+                if (key == KEY_NUM4) {
+                    segundos = segundos == 5 ? 10 : segundos == 10 ? 30 : 5;
+                    repaint();
+                    return;
+                }
+                if (key != KEY_NUM1 && key != KEY_NUM2) return;
+                if (key == KEY_NUM2 && audio == null) {
+                    estado = "Primero graba un audio";
+                    repaint();
+                    return;
+                }
+                grabando = key == KEY_NUM1;
+                ocupado = true;
+                parar = false;
+            }
+            try { new Thread(this).start(); }
+            catch (RuntimeException e) {
+                synchronized (lock) { ocupado = false; }
+                mensaje("No se pudo iniciar: " + e.toString());
+            }
+        }
+        public void run() {
+            try {
+                if (grabando) grabar(); else reproducir();
+            } catch (SecurityException e) {
+                mensaje("Permiso de audio denegado");
+            } catch (Exception e) {
+                mensaje("Error: " + e.toString());
+            } finally {
+                synchronized (lock) { ocupado = false; }
+                repaint();
+            }
+        }
+        private void cerrar(Player p) {
+            if (p == null) return;
+            try { p.stop(); } catch (Exception e) {}
+            try { p.close(); } catch (Exception e) {}
+        }
+        private void grabar() throws Exception {
             Player p = null;
             RecordControl rc = null;
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            Timer timer = new Timer();
-            final boolean[] cancelado = new boolean[]{false};
-
+            ByteArrayOutputStream salida = new ByteArrayOutputStream();
             try {
-                // Intento 1: capture://audio genérico
+                mensaje("Preparando microfono...");
                 try {
                     p = Manager.createPlayer("capture://audio");
                     p.realize();
-                } catch (Exception e1) {
-                    // Intento 2: AMR explícito
-                    if (p != null) { try { p.close(); } catch (Exception ex) {} }
+                } catch (SecurityException e) { throw e; }
+                catch (Exception e) {
+                    cerrar(p);
                     p = Manager.createPlayer("capture://audio?encoding=amr");
                     p.realize();
                 }
-
                 rc = (RecordControl) p.getControl("RecordControl");
-                if (rc == null) {
-                    throw new MediaException("RecordControl no disponible");
-                }
-
-                rc.setRecordStream(baos);
+                if (rc == null) throw new MediaException("Grabacion no disponible");
+                if (parar) { mensaje("Cancelado; audio anterior conservado"); return; }
+                rc.setRecordStream(salida);
                 rc.startRecord();
                 p.start();
-
-                // Corte a los 5 s
-                timer.schedule(new TimerTask() {
-                    public void run() {
-                        cancelado[0] = true;
+                long inicio = System.currentTimeMillis();
+                int limite;
+                synchronized (lock) { limite = segundos; }
+                int anterior = -1;
+                while (!parar) {
+                    int transcurrido = (int) ((System.currentTimeMillis() - inicio) / 1000);
+                    if (transcurrido >= limite) break;
+                    if (transcurrido != anterior) {
+                        mensaje("Grabando " + transcurrido + "/" + limite + " s | 3 Detener");
+                        anterior = transcurrido;
                     }
-                }, 5000);
-
-                while (!cancelado[0]) {
-                    try { Thread.sleep(100); } catch (InterruptedException ie) {}
+                    Thread.sleep(100);
                 }
-
-            } catch (Exception e) {
-                final String msg = "Error grab: " + e.getClass().getName() + " - " + e.getMessage();
-                estado = msg;
-                repaint();
-                return;
+                rc.stopRecord();
+                rc.commit();
+                byte[] datos = salida.toByteArray();
+                if (datos.length == 0) throw new IOException("Grabacion vacia; audio anterior conservado");
+                String tipo = detectar(datos, p.getContentType());
+                synchronized (lock) { audio = datos; mime = tipo; }
+                mensaje("Grabado: " + datos.length + " bytes | " + tipo);
             } finally {
-                timer.cancel();
-                if (rc != null) {
-                    try { rc.stopRecord(); } catch (Exception e) {}
-                }
-                if (p != null) {
-                    try { p.stop(); } catch (Exception e) {}
-                    try { p.close(); } catch (Exception e) {}
-                }
+                if (rc != null) { try { rc.stopRecord(); } catch (Exception e) {} }
+                cerrar(p);
+                salida.close();
             }
-
-            // Determinar formato probable según el locator que funcionó
-            // (si createPlayer no lanzó excepción con el genérico, asumimos WAV/PCM;
-            //  si cayó al AMR, asumimos AMR).
-            // Para no complicar: guardamos el MIME que usaremos al reproducir.
-            // Una heurística: si los primeros bytes son 'RIFF' es WAV.
-            byte[] datos = baos.toByteArray();
-            if (datos.length >= 4 && datos[0] == 'R' && datos[1] == 'I' && datos[2] == 'F' && datos[3] == 'F') {
-                mimeCapturado = "audio/x-wav";
-            } else {
-                // Si no es RIFF, lo más seguro es que el firmware haya entregado AMR
-                mimeCapturado = "audio/amr";
-            }
-
-            audioData = datos;
-
-            final String msgFinal = "Grabado: " + datos.length + " bytes (" + mimeCapturado + ")";
-            estado = msgFinal;
-            repaint();
         }
-
-        // -----------------------------------------------------------
-        // REPRODUCCIÓN
-        // -----------------------------------------------------------
-        private void reproducir() {
-            if (audioData == null || audioData.length == 0) {
-                estado = "No hay audio grabado";
-                repaint();
-                return;
-            }
-            estado = "Reproduciendo...";
-            repaint();
-
-            new Thread(new Runnable() {
-                public void run() {
-                    reproducirHilo();
-                }
-            }).start();
+        private boolean empieza(byte[] datos, String firma, int offset) {
+            if (datos.length < offset + firma.length()) return false;
+            for (int i = 0; i < firma.length(); i++)
+                if ((datos[offset + i] & 255) != firma.charAt(i)) return false;
+            return true;
         }
-
-        private void reproducirHilo() {
+        private String detectar(byte[] datos, String declarado) throws MediaException {
+            if (empieza(datos, "RIFF", 0) && empieza(datos, "WAVE", 8)) return "audio/x-wav";
+            if (empieza(datos, "#!AMR-WB\n", 0)) return "audio/amr-wb";
+            if (empieza(datos, "#!AMR\n", 0)) return "audio/amr";
+            if (declarado != null && declarado.startsWith("audio/")) return declarado;
+            throw new MediaException("Formato desconocido; audio anterior conservado");
+        }
+        private void reproducir() throws Exception {
             Player p = null;
             try {
-                ByteArrayInputStream bais = new ByteArrayInputStream(audioData);
-                // Usamos el MIME detectado en la grabación.
-                // Si por alguna razón mimeCapturado es null, intentamos WAV como pide el enunciado.
-                String mime = (mimeCapturado != null) ? mimeCapturado : "audio/x-wav";
-                p = Manager.createPlayer(bais, mime);
+                byte[] datos;
+                String tipo;
+                synchronized (lock) { datos = audio; tipo = mime; }
+                mensaje("Preparando reproduccion...");
+                p = Manager.createPlayer(new ByteArrayInputStream(datos), tipo);
                 p.realize();
+                if (parar) { mensaje("Reproduccion cancelada"); return; }
                 p.start();
-                // Esperar a que termine (máximo 10 s por seguridad)
+                mensaje("Reproduciendo | 3 Detener");
                 long inicio = System.currentTimeMillis();
-                while (p.getState() == Player.STARTED && (System.currentTimeMillis() - inicio) < 10000) {
-                    try { Thread.sleep(100); } catch (InterruptedException ie) {}
-                }
-                estado = "Reproducido";
-            } catch (Exception e) {
-                estado = "Error reprod: " + e.getClass().getName() + " - " + e.getMessage();
-            } finally {
-                if (p != null) {
-                    try { p.stop(); } catch (Exception e) {}
-                    try { p.close(); } catch (Exception e) {}
-                }
-                repaint();
-            }
+                while (!parar && p.getState() == Player.STARTED
+                        && System.currentTimeMillis() - inicio < 45000) Thread.sleep(100);
+                mensaje(parar ? "Reproduccion detenida" :
+                    p.getState() == Player.STARTED ? "Limite de reproduccion alcanzado" : "Reproduccion finalizada");
+            } finally { cerrar(p); }
         }
     }
 }
