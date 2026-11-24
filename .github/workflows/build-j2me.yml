@@ -26,39 +26,25 @@ jobs:
           distribution: temurin
           java-version: '8'
 
-      - name: Download libraries
+      - name: Download Java ME libraries
         run: |
           set -e
           mkdir -p libs
 
-          echo "Descargando CLDC..."
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors \
             https://repo.maven.apache.org/maven2/org/microemu/cldcapi11/2.0.4/cldcapi11-2.0.4.jar \
             -o libs/cldcapi11.jar
 
-          echo "Descargando MIDP..."
           curl -fL --retry 5 --retry-delay 3 --retry-all-errors \
             https://repo.maven.apache.org/maven2/org/microemu/midpapi20/2.0.4/midpapi20-2.0.4.jar \
             -o libs/midpapi20.jar
 
-          echo "Descargando ProGuard..."
-          curl -fL --retry 5 --retry-delay 3 --retry-all-errors \
-            https://github.com/Guardsquare/proguard/releases/download/v7.1.1/proguard-7.1.1.zip \
-            -o proguard.zip
-
           test -s libs/cldcapi11.jar
           test -s libs/midpapi20.jar
-          test -s proguard.zip
-
-          unzip -t proguard.zip
-          unzip -q proguard.zip -d proguard
-
-          mv proguard/proguard-7.1.1/lib/proguard.jar libs/proguard.jar
 
       - name: Generate MMAPI stubs
         run: |
           set -e
-
           mkdir -p build/stubsrc/javax/microedition/media/control
           mkdir -p build/stubs
 
@@ -156,7 +142,6 @@ EOF
       - name: Compile MMAPI stubs
         run: |
           set -e
-
           javac -source 1.6 -target 1.6 \
             -bootclasspath libs/cldcapi11.jar:libs/midpapi20.jar \
             -d build/stubs \
@@ -165,7 +150,6 @@ EOF
       - name: Package MMAPI stubs
         run: |
           set -e
-
           cd build/stubs
           jar cf ../../libs/stubs.jar .
           cd ../..
@@ -173,7 +157,6 @@ EOF
       - name: Compile MIDlet
         run: |
           set -e
-
           mkdir -p build/classes
 
           javac -source 1.6 -target 1.6 \
@@ -182,42 +165,13 @@ EOF
             -d build/classes \
             src/PruebaAudioMIDlet.java
 
-      - name: Create ProGuard config
-        run: |
-          cat > proguard.cfg <<'EOF'
--microedition
--dontobfuscate
--dontoptimize
--dontwarn
--injars build/classes
--outjars build/preverified.jar
--libraryjars libs/cldcapi11.jar
--libraryjars libs/midpapi20.jar
--libraryjars libs/stubs.jar
--keep public class PruebaAudioMIDlet {
-    public <init>();
-}
-EOF
-
-      - name: Preverify with ProGuard
-        run: |
-          set -e
-
-          java -jar libs/proguard.jar @proguard.cfg
-          test -s build/preverified.jar
-
       - name: Package JAR and JAD
         run: |
           set -e
-
-          mkdir -p dist build/preverified
-
-          cd build/preverified
-          jar xf ../preverified.jar
-          cd ../..
+          mkdir -p dist
 
           jar cfm dist/PruebaAudioMIDlet.jar MANIFEST.MF \
-            -C build/preverified .
+            -C build/classes .
 
           JAR_SIZE=$(stat -c%s dist/PruebaAudioMIDlet.jar)
 
