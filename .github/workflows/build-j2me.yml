@@ -4,7 +4,13 @@ on:
   push:
     branches:
       - main
+      - fix/grabacion-audio-interfaz
+    tags:
+      - 'v*'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -20,7 +26,6 @@ jobs:
           distribution: temurin
           java-version: '8'
 
-      # Descargar bibliotecas necesarias
       - name: Download libraries
         run: |
           set -e
@@ -50,10 +55,6 @@ jobs:
 
           mv proguard/proguard-7.1.1/lib/proguard.jar libs/proguard.jar
 
-          echo "Bibliotecas descargadas:"
-          ls -lh libs/
-
-      # Generar automáticamente las clases MMAPI necesarias
       - name: Generate MMAPI stubs
         run: |
           set -e
@@ -152,9 +153,6 @@ jobs:
           }
           EOF
 
-          echo "Clases MMAPI generadas."
-
-      # Compilar las clases MMAPI
       - name: Compile MMAPI stubs
         run: |
           set -e
@@ -164,9 +162,6 @@ jobs:
             -d build/stubs \
             $(find build/stubsrc -name "*.java")
 
-          echo "Clases MMAPI compiladas."
-
-      # Empaquetar las clases MMAPI
       - name: Package MMAPI stubs
         run: |
           set -e
@@ -175,9 +170,6 @@ jobs:
           jar cf ../../libs/stubs.jar .
           cd ../..
 
-          ls -lh libs/stubs.jar
-
-      # Compilar el MIDlet
       - name: Compile MIDlet
         run: |
           set -e
@@ -190,10 +182,6 @@ jobs:
             -d build/classes \
             src/PruebaAudioMIDlet.java
 
-          echo "MIDlet compilado correctamente."
-          find build/classes -type f
-
-      # Configurar ProGuard
       - name: Create ProGuard config
         run: |
           cat > proguard.cfg <<'EOF'
@@ -211,19 +199,13 @@ jobs:
           }
           EOF
 
-          cat proguard.cfg
-
-      # Preverificar
       - name: Preverify with ProGuard
         run: |
           set -e
 
           java -jar libs/proguard.jar @proguard.cfg
-
           test -s build/preverified.jar
-          ls -lh build/preverified.jar
 
-      # Crear JAR y JAD
       - name: Package JAR and JAD
         run: |
           set -e
@@ -250,14 +232,36 @@ jobs:
           MicroEdition-Profile: MIDP-2.0
           EOF
 
-          echo "Archivos generados:"
-          ls -lh dist/
+          test -s dist/PruebaAudioMIDlet.jar
+          test -s dist/PruebaAudioMIDlet.jad
 
-      # Publicar los archivos
-      - name: Upload JAR and JAD
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: PruebaAudioMIDlet
           path: |
             dist/PruebaAudioMIDlet.jar
+            dist/PruebaAudioMIDlet.jad
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: PruebaAudioMIDlet
+          path: dist
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Prueba de Audio ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/PruebaAudioMIDlet.jar \
             dist/PruebaAudioMIDlet.jad
